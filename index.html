@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#8b5cf6">
+  <title>פאזל לוח הכפל 🧩</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Tone.js for sounds -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  
+  <!-- Babel for JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <style>
+    * {
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      overflow-x: hidden;
+    }
+    
+    /* PWA splash screen */
+    @media (display-mode: standalone) {
+      body {
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+    }
+  </style>
+  
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="data:application/json,%7B%22name%22%3A%22%D7%A4%D7%90%D7%96%D7%9C%20%D7%9C%D7%95%D7%97%20%D7%94%D7%9B%D7%A4%D7%9C%22%2C%22short_name%22%3A%22%D7%A4%D7%90%D7%96%D7%9C%20%D7%9B%D7%A4%D7%9C%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23e0e7ff%22%2C%22theme_color%22%3A%22%238b5cf6%22%7D">
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    const snacks = [
+      { name: 'במבה', emoji: '🥜', bgGradient: 'from-orange-300 to-yellow-200' },
+      { name: 'תפוצ׳יפס', emoji: '🥔', bgGradient: 'from-yellow-300 to-orange-200' },
+      { name: 'שוקולד', emoji: '🍫', bgGradient: 'from-amber-400 to-orange-200' },
+      { name: 'ארטיק', emoji: '🍦', bgGradient: 'from-pink-300 to-purple-200' },
+      { name: 'קרטיב', emoji: '🧊', bgGradient: 'from-blue-300 to-cyan-200' },
+      { name: 'גלידה', emoji: '🍨', bgGradient: 'from-purple-300 to-pink-200' },
+      { name: 'סוכריה', emoji: '🍭', bgGradient: 'from-pink-400 to-red-200' },
+      { name: 'עוגיה', emoji: '🍪', bgGradient: 'from-amber-400 to-yellow-200' },
+    ];
+
+    const GRID_SIZE = 25;
+
+    const generateAllQuestions = () => {
+      const questions = [];
+      for (let a = 1; a <= 9; a++) {
+        for (let b = 1; b <= 9; b++) {
+          questions.push({
+            type: 'multiply',
+            num1: a,
+            num2: b,
+            answer: a * b,
+            id: `mul_${a}_${b}`
+          });
+        }
+      }
+      for (let a = 1; a <= 9; a++) {
+        for (let b = 1; b <= 9; b++) {
+          const product = a * b;
+          questions.push({
+            type: 'divide',
+            num1: product,
+            num2: a,
+            answer: b,
+            id: `div_${product}_${a}`
+          });
+        }
+      }
+      return questions;
+    };
+
+    const shuffleArray = (array) => {
+      const shuffled = [...array];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled;
+    };
+
+    function SnackMathGame() {
+      const [currentSnack, setCurrentSnack] = useState(null);
+      const [revealedTiles, setRevealedTiles] = useState([]);
+      const [num1, setNum1] = useState(0);
+      const [num2, setNum2] = useState(0);
+      const [correctAnswer, setCorrectAnswer] = useState(0);
+      const [operation, setOperation] = useState('multiply');
+      const [userAnswer, setUserAnswer] = useState('');
+      const [message, setMessage] = useState('');
+      const [messageType, setMessageType] = useState('');
+      const [score, setScore] = useState(0);
+      const [streak, setStreak] = useState(0);
+      const [gameWon, setGameWon] = useState(false);
+      const [showCelebration, setShowCelebration] = useState(false);
+      const [totalCorrect, setTotalCorrect] = useState(0);
+      const [totalWrong, setTotalWrong] = useState(0);
+      const [gameMode, setGameMode] = useState('both');
+      const [availableQuestions, setAvailableQuestions] = useState([]);
+      const [usedQuestions, setUsedQuestions] = useState(new Set());
+      
+      const synthRef = useRef(null);
+      const audioStartedRef = useRef(false);
+
+      const ensureAudio = useCallback(() => {
+        if (!audioStartedRef.current && typeof Tone !== 'undefined') {
+          Tone.start().then(() => {
+            synthRef.current = new Tone.PolySynth(Tone.Synth).toDestination();
+            synthRef.current.volume.value = -6;
+            audioStartedRef.current = true;
+          });
+        }
+      }, []);
+
+      const playSound = useCallback((type) => {
+        if (!synthRef.current) return;
+        try {
+          const now = Tone.now();
+          if (type === 'win') {
+            synthRef.current.triggerAttackRelease('C5', '8n', now);
+            synthRef.current.triggerAttackRelease('E5', '8n', now + 0.1);
+            synthRef.current.triggerAttackRelease('G5', '8n', now + 0.2);
+            synthRef.current.triggerAttackRelease('C6', '4n', now + 0.3);
+          } else if (type === 'lose') {
+            synthRef.current.triggerAttackRelease('E4', '8n', now);
+            synthRef.current.triggerAttackRelease('D4', '8n', now + 0.1);
+            synthRef.current.triggerAttackRelease('C4', '4n', now + 0.2);
+          } else if (type === 'victory') {
+            synthRef.current.triggerAttackRelease('C5', '8n', now);
+            synthRef.current.triggerAttackRelease('E5', '8n', now + 0.15);
+            synthRef.current.triggerAttackRelease('G5', '8n', now + 0.3);
+            synthRef.current.triggerAttackRelease('C6', '4n', now + 0.45);
+            synthRef.current.triggerAttackRelease('G5', '16n', now + 0.7);
+            synthRef.current.triggerAttackRelease('C6', '2n', now + 0.85);
+          } else if (type === 'click') {
+            synthRef.current.triggerAttackRelease('A5', '32n', now);
+          }
+        } catch (e) {
+          console.log('Sound error:', e);
+        }
+      }, []);
+
+      const initializeQuestions = useCallback((mode) => {
+        let allQuestions = generateAllQuestions();
+        if (mode === 'multiply') {
+          allQuestions = allQuestions.filter(q => q.type === 'multiply');
+        } else if (mode === 'divide') {
+          allQuestions = allQuestions.filter(q => q.type === 'divide');
+        }
+        const shuffled = shuffleArray(allQuestions);
+        setAvailableQuestions(shuffled);
+        setUsedQuestions(new Set());
+        return shuffled;
+      }, []);
+
+      const getNextQuestion = useCallback(() => {
+        const remaining = availableQuestions.filter(q => !usedQuestions.has(q.id));
+        if (remaining.length === 0) {
+          const reshuffled = shuffleArray(availableQuestions);
+          setAvailableQuestions(reshuffled);
+          setUsedQuestions(new Set());
+          return reshuffled[0];
+        }
+        return remaining[0];
+      }, [availableQuestions, usedQuestions]);
+
+      const generateQuestion = useCallback(() => {
+        const question = getNextQuestion();
+        if (question) {
+          setNum1(question.num1);
+          setNum2(question.num2);
+          setCorrectAnswer(question.answer);
+          setOperation(question.type);
+          setUsedQuestions(prev => new Set([...prev, question.id]));
+        }
+        setUserAnswer('');
+      }, [getNextQuestion]);
+
+      const startNewGame = useCallback(() => {
+        const randomSnack = snacks[Math.floor(Math.random() * snacks.length)];
+        setCurrentSnack(randomSnack);
+        setRevealedTiles([]);
+        setScore(0);
+        setStreak(0);
+        setGameWon(false);
+        setShowCelebration(false);
+        setMessage('');
+        setTotalCorrect(0);
+        setTotalWrong(0);
+        const questions = initializeQuestions(gameMode);
+        if (questions.length > 0) {
+          const firstQuestion = questions[0];
+          setNum1(firstQuestion.num1);
+          setNum2(firstQuestion.num2);
+          setCorrectAnswer(firstQuestion.answer);
+          setOperation(firstQuestion.type);
+          setUsedQuestions(new Set([firstQuestion.id]));
+        }
+        setUserAnswer('');
+      }, [gameMode, initializeQuestions]);
+
+      useEffect(() => {
+        startNewGame();
+      }, []);
+
+      useEffect(() => {
+        if (!gameWon) {
+          const questions = initializeQuestions(gameMode);
+          if (questions.length > 0) {
+            const firstQuestion = questions[0];
+            setNum1(firstQuestion.num1);
+            setNum2(firstQuestion.num2);
+            setCorrectAnswer(firstQuestion.answer);
+            setOperation(firstQuestion.type);
+            setUsedQuestions(new Set([firstQuestion.id]));
+          }
+          setUserAnswer('');
+        }
+      }, [gameMode, initializeQuestions, gameWon]);
+
+      const revealRandomTile = useCallback(() => {
+        const hiddenTiles = [];
+        for (let i = 0; i < GRID_SIZE; i++) {
+          if (!revealedTiles.includes(i)) {
+            hiddenTiles.push(i);
+          }
+        }
+        if (hiddenTiles.length > 0) {
+          const randomTile = hiddenTiles[Math.floor(Math.random() * hiddenTiles.length)];
+          setRevealedTiles(prev => [...prev, randomTile]);
+          return hiddenTiles.length - 1;
+        }
+        return 0;
+      }, [revealedTiles]);
+
+      const resetAllTiles = useCallback(() => {
+        setRevealedTiles([]);
+        setUsedQuestions(new Set());
+        const reshuffled = shuffleArray(availableQuestions);
+        setAvailableQuestions(reshuffled);
+      }, [availableQuestions]);
+
+      const checkAnswer = () => {
+        ensureAudio();
+        const userNum = parseInt(userAnswer, 10);
+        if (isNaN(userNum) || userAnswer === '') {
+          setMessage('הכנס מספר!');
+          setMessageType('warning');
+          return;
+        }
+        if (userNum === correctAnswer) {
+          playSound('win');
+          setTotalCorrect(prev => prev + 1);
+          setStreak(prev => prev + 1);
+          const bonusPoints = 10 + streak * 2;
+          setScore(prev => prev + bonusPoints);
+          const remaining = revealRandomTile();
+          if (remaining === 0) {
+            setGameWon(true);
+            setShowCelebration(true);
+            setTimeout(() => playSound('victory'), 300);
+            setMessage(`🎉 כל הכבוד! גילית את ה${currentSnack?.name}! 🎉`);
+            setMessageType('victory');
+          } else {
+            setMessage(`נכון! +${bonusPoints} נקודות 🌟`);
+            setMessageType('success');
+            generateQuestion();
+          }
+        } else {
+          playSound('lose');
+          setTotalWrong(prev => prev + 1);
+          setStreak(0);
+          resetAllTiles();
+          setMessage(`לא נכון... התשובה היא ${correctAnswer}. מתחילים מחדש!`);
+          setMessageType('error');
+          setTimeout(() => {
+            generateQuestion();
+            setMessage('');
+          }, 2000);
+        }
+      };
+
+      const handleNumberClick = (num) => {
+        ensureAudio();
+        playSound('click');
+        if (userAnswer.length < 3) {
+          setUserAnswer(prev => prev + num.toString());
+        }
+      };
+
+      const handleDelete = () => {
+        ensureAudio();
+        playSound('click');
+        setUserAnswer(prev => prev.slice(0, -1));
+      };
+
+      const handleClear = () => {
+        ensureAudio();
+        playSound('click');
+        setUserAnswer('');
+      };
+
+      const handleModeChange = (mode) => {
+        ensureAudio();
+        setGameMode(mode);
+      };
+
+      const handleNewGame = () => {
+        ensureAudio();
+        startNewGame();
+      };
+
+      const renderPuzzle = () => {
+        if (!currentSnack) return null;
+        const gridSize = 5;
+        return (
+          <div 
+            className="relative rounded-3xl overflow-hidden shadow-2xl mx-auto"
+            style={{ width: 'min(90vw, 450px)', height: 'min(90vw, 450px)' }}
+          >
+            <div className={`absolute inset-0 bg-gradient-to-br ${currentSnack.bgGradient}`}>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span style={{ fontSize: 'min(70vw, 320px)' }} className="select-none">{currentSnack.emoji}</span>
+              </div>
+            </div>
+            <div className="absolute inset-0 grid grid-cols-5 grid-rows-5 gap-1 p-1">
+              {Array.from({ length: GRID_SIZE }).map((_, index) => {
+                const isRevealed = revealedTiles.includes(index);
+                const row = Math.floor(index / gridSize);
+                const col = index % gridSize;
+                const colorIndex = (row + col) % 5;
+                const colors = [
+                  'from-blue-500 to-blue-600',
+                  'from-purple-500 to-purple-600',
+                  'from-pink-500 to-pink-600',
+                  'from-indigo-500 to-indigo-600',
+                  'from-violet-500 to-violet-600',
+                ];
+                return (
+                  <div
+                    key={index}
+                    className={`flex items-center justify-center rounded-xl transition-all duration-500 transform ${isRevealed ? 'scale-0 opacity-0' : `scale-100 opacity-100 bg-gradient-to-br ${colors[colorIndex]} shadow-lg`}`}
+                  >
+                    {!isRevealed && (
+                      <span className="text-4xl sm:text-5xl text-white font-bold drop-shadow-lg">?</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {showCelebration && (
+              <div className="absolute inset-0 pointer-events-none">
+                {Array.from({ length: 40 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="absolute text-4xl animate-bounce"
+                    style={{
+                      left: `${Math.random() * 100}%`,
+                      top: `${Math.random() * 100}%`,
+                      animationDelay: `${Math.random() * 0.5}s`,
+                      animationDuration: `${0.5 + Math.random() * 0.5}s`
+                    }}
+                  >
+                    {['⭐', '🎉', '✨', '🌟', '💫', '🎊'][Math.floor(Math.random() * 6)]}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const getOperationSymbol = () => operation === 'multiply' ? '×' : '÷';
+      const getOperationColor = () => operation === 'multiply' ? 'text-purple-600' : 'text-blue-600';
+
+      const NumButton = ({ num, onClick }) => (
+        <button
+          type="button"
+          onClick={onClick}
+          className="w-16 h-14 sm:w-20 sm:h-16 text-2xl sm:text-3xl font-bold rounded-2xl bg-gradient-to-br from-white to-gray-100 hover:from-gray-100 hover:to-gray-200 active:from-gray-200 active:to-gray-300 shadow-lg active:shadow-md transition-all transform active:scale-95 text-gray-700 border-2 border-gray-200"
+        >
+          {num}
+        </button>
+      );
+
+      return (
+        <div className="min-h-screen bg-gradient-to-b from-indigo-100 via-purple-50 to-pink-100 p-2 sm:p-4" dir="rtl">
+          <div className="max-w-2xl mx-auto">
+            <div className="text-center mb-2">
+              <h1 className="text-2xl sm:text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600 mb-1">
+                🧩 פאזל לוח הכפל 🍬
+              </h1>
+              <p className="text-red-500 text-sm font-bold">⚠️ טעות אחת = מתחילים מההתחלה!</p>
+            </div>
+
+            <div className="flex justify-center gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => handleModeChange('multiply')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-sm transition-all ${gameMode === 'multiply' ? 'bg-purple-500 text-white shadow-lg scale-105' : 'bg-white text-purple-500 hover:bg-purple-50'}`}
+              >
+                ✖️ כפל
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeChange('divide')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-sm transition-all ${gameMode === 'divide' ? 'bg-blue-500 text-white shadow-lg scale-105' : 'bg-white text-blue-500 hover:bg-blue-50'}`}
+              >
+                ➗ חילוק
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeChange('both')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-sm transition-all ${gameMode === 'both' ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg scale-105' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              >
+                🔀 שניהם
+              </button>
+            </div>
+
+            <div className="flex justify-center gap-3 mb-2">
+              <div className="bg-white rounded-xl px-3 py-1 shadow-md">
+                <span className="text-gray-500 text-xs">ניקוד</span>
+                <p className="text-lg font-bold text-purple-600">{score}</p>
+              </div>
+              <div className="bg-white rounded-xl px-3 py-1 shadow-md">
+                <span className="text-gray-500 text-xs">רצף</span>
+                <p className="text-lg font-bold text-orange-500">{streak} 🔥</p>
+              </div>
+              <div className="bg-white rounded-xl px-3 py-1 shadow-md">
+                <span className="text-gray-500 text-xs">חלקים</span>
+                <p className="text-lg font-bold text-green-500">{revealedTiles.length}/{GRID_SIZE}</p>
+              </div>
+            </div>
+
+            <div className="w-full bg-gray-200 rounded-full h-4 mb-3 overflow-hidden">
+              <div 
+                className="h-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-500 rounded-full"
+                style={{ width: `${(revealedTiles.length / GRID_SIZE) * 100}%` }}
+              />
+            </div>
+
+            <div className="flex justify-center mb-3">
+              {renderPuzzle()}
+            </div>
+
+            {message && (
+              <div className={`text-center py-2 px-3 rounded-xl mb-2 font-bold text-base ${messageType === 'success' ? 'bg-green-100 text-green-700' : ''} ${messageType === 'error' ? 'bg-red-100 text-red-700' : ''} ${messageType === 'victory' ? 'bg-yellow-100 text-yellow-700 animate-pulse' : ''} ${messageType === 'warning' ? 'bg-orange-100 text-orange-700' : ''}`}>
+                {message}
+              </div>
+            )}
+
+            {!gameWon ? (
+              <div className="bg-white rounded-2xl p-4 shadow-xl">
+                <div className="text-center mb-3">
+                  <div dir="ltr" className="inline-block">
+                    <span className={`text-4xl sm:text-5xl font-bold ${getOperationColor()}`}>
+                      {num1} {getOperationSymbol()} {num2} = ?
+                    </span>
+                  </div>
+                  <div className="mt-1">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${operation === 'multiply' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                      {operation === 'multiply' ? 'כפל' : 'חילוק'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex justify-center mb-2">
+                  <div className={`w-36 h-16 flex items-center justify-center text-4xl font-bold border-4 rounded-xl bg-gray-50 ${operation === 'multiply' ? 'border-purple-300' : 'border-blue-300'}`}>
+                    {userAnswer || <span className="text-gray-300">?</span>}
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-2 max-w-xs mx-auto mt-4" dir="ltr">
+                  <NumButton num={1} onClick={() => handleNumberClick(1)} />
+                  <NumButton num={2} onClick={() => handleNumberClick(2)} />
+                  <NumButton num={3} onClick={() => handleNumberClick(3)} />
+                  <NumButton num={4} onClick={() => handleNumberClick(4)} />
+                  <NumButton num={5} onClick={() => handleNumberClick(5)} />
+                  <NumButton num={6} onClick={() => handleNumberClick(6)} />
+                  <NumButton num={7} onClick={() => handleNumberClick(7)} />
+                  <NumButton num={8} onClick={() => handleNumberClick(8)} />
+                  <NumButton num={9} onClick={() => handleNumberClick(9)} />
+                  <button
+                    type="button"
+                    onClick={handleClear}
+                    className="w-16 h-14 sm:w-20 sm:h-16 text-lg font-bold rounded-2xl bg-gradient-to-br from-red-50 to-red-100 hover:from-red-100 hover:to-red-200 active:from-red-200 active:to-red-300 shadow-lg active:shadow-md transition-all transform active:scale-95 text-red-500 border-2 border-red-200"
+                  >
+                    🗑️
+                  </button>
+                  <NumButton num={0} onClick={() => handleNumberClick(0)} />
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    className="w-16 h-14 sm:w-20 sm:h-16 text-lg font-bold rounded-2xl bg-gradient-to-br from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 active:from-orange-200 active:to-orange-300 shadow-lg active:shadow-md transition-all transform active:scale-95 text-orange-500 border-2 border-orange-200"
+                  >
+                    ⌫
+                  </button>
+                </div>
+
+                <div className="flex justify-center mt-4">
+                  <button
+                    type="button"
+                    onClick={checkAnswer}
+                    className={`text-white font-bold py-3 px-12 rounded-2xl text-2xl transform hover:scale-105 active:scale-95 transition-all shadow-lg ${operation === 'multiply' ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-gradient-to-r from-blue-500 to-cyan-500'}`}
+                  >
+                    בדוק! ✓
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl p-6 shadow-xl text-center">
+                <h2 className="text-3xl font-bold text-purple-600 mb-4">🏆 ניצחון! 🏆</h2>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="bg-green-50 rounded-lg p-3">
+                    <p className="text-gray-500 text-sm">תשובות נכונות</p>
+                    <p className="text-3xl font-bold text-green-600">{totalCorrect}</p>
+                  </div>
+                  <div className="bg-red-50 rounded-lg p-3">
+                    <p className="text-gray-500 text-sm">טעויות</p>
+                    <p className="text-3xl font-bold text-red-600">{totalWrong}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleNewGame}
+                  className="bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold py-3 px-8 rounded-xl text-xl hover:from-green-600 hover:to-emerald-600 transform hover:scale-105 transition-all shadow-lg"
+                >
+                  משחק חדש! 🎮
+                </button>
+              </div>
+            )}
+
+            <div className="mt-2 text-center text-gray-500 text-xs">
+              <p>נכונות: {totalCorrect} | טעויות: {totalWrong}</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<SnackMathGame />);
+  </script>
+</body>
+</html>
